@@ -1,0 +1,27 @@
+# Entornos virtuales
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Jupyter
+.ipynb_checkpoints/
+
+# macOS
+.DS_Store
+
+# Airflow (logs y config los genera cada uno)
+airflow/logs/*
+!airflow/logs/.gitkeep
+airflow/config/*
+!airflow/config/.gitkeep
+
+# MLflow local
+mlruns/
+
+# Modelos y artefactos
+*.pkl
+*.joblib
