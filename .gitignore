@@ -25,3 +25,6 @@ mlruns/
 # Modelos y artefactos
 *.pkl
 *.joblib
+
+# Uso interno (no va al repo)
+PLAN.md
