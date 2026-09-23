@@ -1,6 +1,6 @@
 # TP Final - Operaciones de Aprendizaje Automático I (MLOps)
 
-**Integrantes:** Gonzalo Castro
+**Integrantes:** Martín Birman, Gonzalo Castro
 
 Puesta en producción del modelo de predicción de precios de autos usados que armamos en
 Aprendizaje de Máquina I. Es un Gradient Boosting sobre el dataset de CarDekho que entrena
