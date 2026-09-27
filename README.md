@@ -51,3 +51,17 @@ Para bajarlo:
 ```bash
 docker compose --profile all down
 ```
+
+## Próximos pasos
+
+Por ahora está resuelta la parte de datos. Lo que falta:
+
+1. Pasar a `src/car_price/` el preprocesamiento y el Gradient Boosting del notebook, así el
+   modelo se entrena desde código.
+2. Un DAG de Airflow que suba el CSV a MinIO, lo limpie y entrene el modelo.
+3. Loguear en MLflow la búsqueda de hiperparámetros y registrar el mejor modelo como champion.
+4. Que la API cargue el champion y tenga un endpoint `/predict` que devuelva el precio en
+   rupias.
+5. Completar la documentación con ejemplos de request y response.
+
+La idea es serializar el pipeline completo, con la limpieza incluida, para que la API reciba los datos en el mismo formato que el CSV y no haya que repetir código.
