@@ -28,3 +28,6 @@ mlruns/
 
 # Uso interno (no va al repo)
 PLAN.md
+
+# pytest
+.pytest_cache/
