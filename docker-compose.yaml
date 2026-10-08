@@ -48,12 +48,16 @@ x-airflow-common: &airflow-common
     AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_ACCESS_KEY:-minio123}
     AWS_ENDPOINT_URL_S3: http://s3:9000
     MLFLOW_S3_ENDPOINT_URL: http://s3:9000
+    # Código del proyecto (car_price) importable desde los DAGs
+    PYTHONPATH: /opt/airflow/src
   volumes:
     - ${AIRFLOW_PROJ_DIR:-./airflow}/dags:/opt/airflow/dags
     - ${AIRFLOW_PROJ_DIR:-./airflow}/logs:/opt/airflow/logs
     - ${AIRFLOW_PROJ_DIR:-./airflow}/config:/opt/airflow/config
     - ${AIRFLOW_PROJ_DIR:-./airflow}/plugins:/opt/airflow/plugins
     - ${AIRFLOW_PROJ_DIR:-./airflow}/secrets:/opt/secrets
+    - ./src:/opt/airflow/src
+    - ./data:/opt/airflow/data:ro
   networks:
     - frontend
     - backend
@@ -109,7 +113,7 @@ services:
 
   s3:
     restart: always
-    image: quay.io/minio/minio:latest
+    image: coollabsio/minio:RELEASE.2025-04-22T22-12-26Z
     container_name: minio
     profiles:
       - mlflow
@@ -134,7 +138,7 @@ services:
       retries: 3
 
   create_s3_buckets:
-    image: quay.io/minio/mc:latest
+    image: coollabsio/minio:RELEASE.2025-04-22T22-12-26Z
     container_name: minio_create_bucket
     profiles:
       - mlflow
