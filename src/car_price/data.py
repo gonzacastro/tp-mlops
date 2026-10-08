@@ -40,6 +40,7 @@ def limpiar_columnas(df):
 def filtrar_filas(df):
     """Descarta duplicados, registros inválidos, faltantes estructurales y errores de carga.
 
+    Conserva el índice original para poder volver a las filas crudas (ver `filas_validas`).
     Devuelve el DataFrame filtrado y la traza con cuántas filas eliminó cada paso.
     """
     trazas = []
@@ -48,16 +49,16 @@ def filtrar_filas(df):
         trazas.append({'paso': paso, 'filas_eliminadas': n_antes - len(df),
                        'filas_restantes': len(df), 'motivo': detalle})
 
-    n = len(df); df = df.drop_duplicates().reset_index(drop=True)
+    n = len(df); df = df.drop_duplicates()
     registrar('Duplicados exactos', n, 'Publicaciones repetidas del scraping (riesgo de leakage train/test)')
 
-    n = len(df); df = df[df['owner'] != 'Test Drive Car'].reset_index(drop=True)
+    n = len(df); df = df[df['owner'] != 'Test Drive Car']
     registrar('owner = Test Drive Car', n, 'No encaja en la escala ordinal de owner')
 
-    n = len(df); df = df[~df[TECNICAS].isna().all(axis=1)].reset_index(drop=True)
+    n = len(df); df = df[~df[TECNICAS].isna().all(axis=1)]
     registrar('Bloque sin ficha técnica', n, 'Los 4 campos técnicos faltan juntos; mecanismo MAR')
 
-    n = len(df); df = df[df['km_driven'] <= KM_MAX].reset_index(drop=True)
+    n = len(df); df = df[df['km_driven'] <= KM_MAX]
     registrar(f'km_driven > {KM_MAX:,}', n, 'Errores de carga (valores físicamente imposibles)')
 
     return df, pd.DataFrame(trazas)
@@ -65,11 +66,26 @@ def filtrar_filas(df):
 
 def limpiar(df_crudo):
     """Limpieza completa para entrenamiento: columnas y después filas."""
-    return filtrar_filas(limpiar_columnas(df_crudo))
+    df, traza = filtrar_filas(limpiar_columnas(df_crudo))
+    return df.reset_index(drop=True), traza
+
+
+def filas_validas(df_crudo):
+    """Filas crudas (las 13 columnas originales) que sobreviven a la limpieza.
+
+    El Pipeline entrena con columnas crudas, las mismas que recibe la API, y hace la
+    limpieza de columnas adentro. Los filtros de filas se deciden igual que en `limpiar`
+    (los duplicados, sobre las columnas ya limpias) pero se devuelven las filas sin tocar.
+    """
+    df, _ = filtrar_filas(limpiar_columnas(df_crudo))
+    return df_crudo.loc[df.index].reset_index(drop=True)
 
 
 def split(df):
-    """Separa target en escala log y predictores, y parte en train/test."""
+    """Separa target en escala log y predictores, y parte en train/test.
+
+    Sirve tanto para el DataFrame limpio como para el crudo de `filas_validas`.
+    """
     y = np.log(df['selling_price'])
     X = df.drop(columns=['selling_price'])
     return train_test_split(X, y, test_size=TEST_SIZE, random_state=RANDOM_STATE)
