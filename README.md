@@ -52,6 +52,29 @@ Para bajarlo:
 docker compose --profile all down
 ```
 
+## Usar MLflow desde la máquina
+
+Adentro de Docker los servicios se ven por nombre (`mlflow:5000`, `s3:9000`), pero desde la
+máquina hay que usar los puertos publicados. MLflow guarda los artefactos directo en MinIO,
+así que además del tracking hacen falta el endpoint y las credenciales de S3:
+
+```bash
+export MLFLOW_TRACKING_URI=http://localhost:5001
+export MLFLOW_S3_ENDPOINT_URL=http://localhost:9000
+export AWS_ACCESS_KEY_ID=minio
+export AWS_SECRET_ACCESS_KEY=minio123
+```
+
+Para comprobar que funciona, con al menos `docker compose --profile mlflow up` corriendo:
+
+```bash
+python scripts/smoke_mlflow.py
+```
+
+El script usa esos mismos valores por defecto y loguea un parámetro, una métrica y un archivo
+de texto en el experimento `smoke`. Si anda, el run aparece en la UI de MLflow y el archivo en
+el bucket `mlflow` de MinIO.
+
 ## Próximos pasos
 
 Por ahora está resuelta la parte de datos. Lo que falta:
