@@ -80,11 +80,32 @@ def train_car_price():
         }
 
     @task
-    def entrenar():
-        """Búsqueda de hiperparámetros y registro en MLflow (D4)."""
-        print("entrenar: pendiente de implementar")
+    def entrenar(rutas):
+        """Búsqueda de hiperparámetros, evaluación en test y registro en MLflow.
 
-    preparar(subir_crudo()) >> entrenar()
+        `n_iter` sale de la Variable `hpo_n_iter` (airflow/secrets/variables.yaml).
+        El modelo queda como versión nueva de `car_price_gb`, con alias `champion`
+        solo si mejora al actual. Devuelve el resumen por XCom.
+        """
+        from airflow.sdk import Variable
+
+        from car_price.entrenar import entrenar_y_registrar
+
+        n_iter = int(Variable.get("hpo_n_iter", default=10))
+        print(f"Búsqueda de hiperparámetros con n_iter={n_iter}")
+
+        r = entrenar_y_registrar(_leer_csv(rutas["train"]), _leer_csv(rutas["test"]), n_iter)
+
+        m = r["metricas_test"]
+        print(f"Versión {r['version']} de car_price_gb: "
+              f"{'nuevo champion' if r['champion'] else 'no mejora al champion'} "
+              f"(champion anterior: {r['champion_anterior']})")
+        print(f"Test: RMSE-log={m['rmse_log']:.4f}  R²-log={m['r2_log']:.4f}  "
+              f"MAE={m['mae_inr']:,.0f} INR  |  CV: RMSE-log={r['rmse_log_cv_media']:.4f}")
+        print(f"Mejores parámetros: {r['mejores_params']}")
+        return r
+
+    entrenar(preparar(subir_crudo()))
 
 
 train_car_price()
