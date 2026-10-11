@@ -43,3 +43,9 @@ ESPACIO_GB = {
 EXPERIMENTO = 'car_price'
 NOMBRE_MODELO = 'car_price_gb'
 ALIAS_CHAMPION = 'champion'
+
+# --- MinIO (s3://data) ---
+BUCKET_DATOS = 'data'
+CLAVE_CRUDO = 'raw/car_details_v3.csv'
+CLAVE_TRAIN = 'processed/train.csv'
+CLAVE_TEST = 'processed/test.csv'

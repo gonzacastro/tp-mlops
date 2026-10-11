@@ -11,6 +11,12 @@ from datetime import datetime
 from airflow.sdk import dag, task
 
 
+def _s3():
+    """Cliente de MinIO. Credenciales y endpoint salen del entorno de Airflow."""
+    import boto3
+    return boto3.client("s3")
+
+
 @dag(
     dag_id="train_car_price",
     schedule=None,
@@ -23,8 +29,16 @@ def train_car_price():
 
     @task
     def subir_crudo():
-        """Sube el CSV crudo a s3://data/raw/ (D2)."""
-        print("subir_crudo: pendiente de implementar")
+        """Sube el CSV crudo montado en /opt/airflow/data a s3://data/raw/.
+
+        Devuelve la URI por XCom.
+        """
+        from car_price.config import BUCKET_DATOS, CLAVE_CRUDO, DATA_PATH
+
+        _s3().upload_file(str(DATA_PATH), BUCKET_DATOS, CLAVE_CRUDO)
+        uri = f"s3://{BUCKET_DATOS}/{CLAVE_CRUDO}"
+        print(f"{DATA_PATH} -> {uri}")
+        return uri
 
     @task
     def preparar():
