@@ -91,6 +91,15 @@ def split(df):
     return train_test_split(X, y, test_size=TEST_SIZE, random_state=RANDOM_STATE)
 
 
+def separar_train_test(df):
+    """Parte el DataFrame completo (con `selling_price`) en train y test.
+
+    Mismas filas que `split` (misma semilla y proporción), pero sin separar el target:
+    es lo que el DAG guarda en s3://data/processed/.
+    """
+    return train_test_split(df, test_size=TEST_SIZE, random_state=RANDOM_STATE)
+
+
 if __name__ == '__main__':
     crudo = cargar_crudo()
     df, traza = limpiar(crudo)

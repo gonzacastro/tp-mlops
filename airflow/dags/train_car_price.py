@@ -17,6 +17,23 @@ def _s3():
     return boto3.client("s3")
 
 
+def _partir_uri(uri):
+    """'s3://data/raw/x.csv' -> ('data', 'raw/x.csv')"""
+    bucket, _, clave = uri.removeprefix("s3://").partition("/")
+    return bucket, clave
+
+
+def _leer_csv(uri):
+    import pandas as pd
+    bucket, clave = _partir_uri(uri)
+    return pd.read_csv(_s3().get_object(Bucket=bucket, Key=clave)["Body"])
+
+
+def _escribir_csv(df, bucket, clave):
+    _s3().put_object(Bucket=bucket, Key=clave, Body=df.to_csv(index=False).encode())
+    return f"s3://{bucket}/{clave}"
+
+
 @dag(
     dag_id="train_car_price",
     schedule=None,
@@ -41,16 +58,33 @@ def train_car_price():
         return uri
 
     @task
-    def preparar():
-        """Limpia y separa train/test en s3://data/processed/ (D3)."""
-        print("preparar: pendiente de implementar")
+    def preparar(uri_crudo):
+        """Limpia el crudo y guarda train y test en s3://data/processed/.
+
+        Los CSV conservan las columnas crudas más `selling_price`: la limpieza de
+        columnas va adentro del Pipeline. Devuelve las dos URIs por XCom.
+        """
+        from car_price.config import BUCKET_DATOS, CLAVE_TEST, CLAVE_TRAIN
+        from car_price.data import filas_validas, limpiar, separar_train_test
+
+        crudo = _leer_csv(uri_crudo)
+        _, traza = limpiar(crudo)
+        print("Traza de limpieza:\n" + traza.to_string(index=False))
+
+        train_df, test_df = separar_train_test(filas_validas(crudo))
+        print(f"{len(crudo):,} crudas -> {len(train_df):,} train / {len(test_df):,} test")
+
+        return {
+            "train": _escribir_csv(train_df, BUCKET_DATOS, CLAVE_TRAIN),
+            "test": _escribir_csv(test_df, BUCKET_DATOS, CLAVE_TEST),
+        }
 
     @task
     def entrenar():
         """Búsqueda de hiperparámetros y registro en MLflow (D4)."""
         print("entrenar: pendiente de implementar")
 
-    subir_crudo() >> preparar() >> entrenar()
+    preparar(subir_crudo()) >> entrenar()
 
 
 train_car_price()
