@@ -1,16 +1,22 @@
+"""API de predicción de precios de autos usados (CarDekho, India).
+
+Sirve el modelo `car_price_gb@champion` del registry de MLflow. Documentación interactiva
+en /docs.
+"""
 import logging
 from contextlib import asynccontextmanager
-from typing import NamedTuple
+from typing import Annotated, NamedTuple
 
 import mlflow
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException
+from fastapi.responses import RedirectResponse
 from mlflow import MlflowClient
 from mlflow.entities.model_registry import ModelVersion
 
 from car_price.config import ALIAS_CHAMPION, NOMBRE_MODELO
-from schemas import Auto, InfoModelo, MetricasTest, Prediccion, Recarga, Salud
+from schemas import EJEMPLO_AUTO, Auto, InfoModelo, MetricasTest, Prediccion, Recarga, Salud
 
 log = logging.getLogger("uvicorn.error")
 
@@ -54,23 +60,100 @@ async def lifespan(app):
     yield
 
 
-app = FastAPI(lifespan=lifespan)
+DESCRIPCION = """
+Estima el precio de un auto usado en India a partir de los datos de su publicación.
+
+**Modelo.** Gradient Boosting entrenado con el dataset de
+[CarDekho](https://www.kaggle.com/datasets/nehalbirla/vehicle-dataset-from-cardekho)
+(8.128 publicaciones, 6.691 después de la limpieza). Es un Pipeline de scikit-learn que
+incluye la limpieza: recibe los campos tal como vienen en el CSV (`"23.4 kmpl"`,
+`"1248 CC"`) y predice el logaritmo del precio. La API devuelve `exp(predicción)`, en rupias.
+
+**Desempeño de referencia** en test (1.339 autos que el modelo no vio): R² ≈ 0.92 y
+RMSE ≈ 0.21 en escala log, es decir, un error típico de ±20 % sobre el precio. El error
+absoluto medio ronda las 72.000 INR. Las métricas exactas del modelo cargado están en
+`GET /modelo`.
+
+**De dónde sale el modelo.** El DAG `train_car_price` de Airflow entrena con búsqueda de
+hiperparámetros, registra cada versión en MLflow como `car_price_gb` y le pasa el alias
+`champion` solo si mejora el RMSE en test. La API carga el champion al arrancar; después
+de una corrida del DAG, `POST /modelo/recargar` toma la versión nueva sin reiniciar.
+"""
+
+TAGS = [
+    {"name": "Predicción", "description": "Precio estimado de un auto."},
+    {"name": "Modelo", "description": "Qué modelo se está sirviendo y cómo actualizarlo."},
+    {"name": "Servicio", "description": "Estado de la API."},
+]
+
+EJEMPLO_503 = {
+    "description": "No hay un modelo champion cargado.",
+    "content": {"application/json": {"example": {"detail": (
+        f"No hay modelo {NOMBRE_MODELO}@{ALIAS_CHAMPION} cargado (INVALID_PARAMETER_VALUE: "
+        f"Registered model alias champion not found). Corré el DAG train_car_price y "
+        f"después POST /modelo/recargar.")}}},
+}
+
+EJEMPLOS_PREDICT = {
+    "completo": {
+        "summary": "Publicación completa",
+        "description": "Una fila del CSV tal cual (el primer auto del dataset, vendido a 450.000 INR).",
+        "value": EJEMPLO_AUTO,
+    },
+    "sin_ficha_tecnica": {
+        "summary": "Sin ficha técnica",
+        "description": "Solo los campos obligatorios: el modelo imputa rendimiento, motor, "
+                       "potencia y asientos.",
+        "value": {k: EJEMPLO_AUTO[k] for k in
+                  ("name", "year", "km_driven", "fuel", "seller_type", "transmission", "owner")},
+    },
+    "gnc_automatico": {
+        "summary": "GNC, segundo dueño",
+        "description": "Rendimiento en km/kg, como en los autos a gas.",
+        "value": {"name": "Maruti Wagon R LXI CNG", "year": 2017, "km_driven": 40000,
+                  "fuel": "CNG", "seller_type": "Dealer", "transmission": "Manual",
+                  "owner": "Second Owner", "mileage": "26.6 km/kg", "engine": "998 CC",
+                  "max_power": "58.16 bhp", "torque": "77Nm@ 3500rpm", "seats": 5},
+    },
+}
+
+app = FastAPI(
+    title="Precio de autos usados · CarDekho",
+    description=DESCRIPCION,
+    version="1.0.0",
+    openapi_tags=TAGS,
+    lifespan=lifespan,
+)
 
 
-@app.get("/")
-def read_root():
-    return {"message": "Welcome to the Model Service"}
+@app.get("/", include_in_schema=False)
+def raiz():
+    return RedirectResponse("/docs")
 
 
-@app.get("/health", response_model=Salud)
+@app.get("/health", response_model=Salud, tags=["Servicio"], summary="Estado del servicio")
 def health():
-    """Para el healthcheck de Docker: responde aunque no haya modelo cargado."""
+    """Responde `ok` siempre que la API esté arriba, haya o no modelo cargado (así el
+    healthcheck de Docker no reinicia el contenedor antes de que corra el DAG).
+    `modelo_cargado` dice si `/predict` va a poder responder."""
     return Salud(status="ok", modelo_cargado=app.state.champion is not None)
 
 
-@app.post("/predict", response_model=Prediccion)
-def predict(auto: Auto):
-    """Precio estimado en rupias para una publicación con el formato del CSV."""
+@app.post("/predict", response_model=Prediccion, tags=["Predicción"],
+          summary="Estimar el precio de un auto",
+          responses={503: EJEMPLO_503})
+def predict(auto: Annotated[Auto, Body(openapi_examples=EJEMPLOS_PREDICT)]):
+    """Recibe una publicación con los campos del CSV de CarDekho y devuelve el precio
+    estimado en rupias, junto con la versión del modelo que lo calculó.
+
+    Los campos con unidades van como texto, igual que en el CSV (`"23.4 kmpl"`,
+    `"1248 CC"`, `"74 bhp"`); la limpieza la hace el modelo. Los de la ficha técnica
+    (`mileage`, `engine`, `max_power`, `torque`, `seats`) son opcionales.
+
+    - **422** si falta un campo obligatorio o un valor está fuera de lo que vio el modelo
+      (por ejemplo, `owner: "Test Drive Car"` o un año posterior a 2020).
+    - **503** si todavía no hay modelo champion.
+    """
     champion = app.state.champion
     if champion is None:
         raise sin_modelo()
@@ -85,9 +168,11 @@ def predict(auto: Auto):
     )
 
 
-@app.get("/modelo", response_model=InfoModelo)
+@app.get("/modelo", response_model=InfoModelo, tags=["Modelo"],
+         summary="Modelo que se está sirviendo", responses={503: EJEMPLO_503})
 def info_modelo():
-    """Versión, run y métricas en test del modelo que se está sirviendo."""
+    """Versión de `car_price_gb` cargada, el run de MLflow que la generó y sus métricas
+    en test (`rmse_log` y `r2_log` en escala log; `mae_inr` en rupias)."""
     champion = app.state.champion
     if champion is None:
         raise sin_modelo()
@@ -100,7 +185,12 @@ def info_modelo():
                       run_id=v.run_id, metricas_test=metricas)
 
 
-@app.post("/modelo/recargar", response_model=Recarga)
+@app.post("/modelo/recargar", response_model=Recarga, tags=["Modelo"],
+          summary="Tomar el champion actual sin reiniciar",
+          responses={503: {"description": "No se pudo recargar; sigue el modelo anterior.",
+                           "content": {"application/json": {"example": {"detail": (
+                               "No se pudo recargar (INVALID_PARAMETER_VALUE: Registered "
+                               "model alias champion not found); sigue la versión 2.")}}}}})
 def recargar():
     """Vuelve a leer el alias champion y carga esa versión, sin reiniciar el contenedor.
 
