@@ -96,3 +96,47 @@ class Prediccion(BaseModel):
     precio_inr: int = Field(description="Precio estimado en rupias indias, redondeado.")
     version_modelo: str = Field(description="Versión de `car_price_gb` en el registry de MLflow.")
     alias: str = Field(description="Alias con el que se cargó el modelo.")
+
+
+class MetricasTest(BaseModel):
+    """Métricas del modelo sobre el test (1.339 autos que no vio al entrenar)."""
+
+    rmse_log: float = Field(description="RMSE en escala log(precio).")
+    r2_log: float = Field(description="R² en escala log(precio).")
+    mae_inr: float = Field(description="Error absoluto medio en rupias.")
+
+
+class InfoModelo(BaseModel):
+    """Qué modelo está sirviendo la API."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [{
+        "nombre": "car_price_gb", "version": "2", "alias": "champion",
+        "run_id": "ded7bb3fbf18446b9d9910d438fc8386",
+        "metricas_test": {"rmse_log": 0.2049, "r2_log": 0.9224, "mae_inr": 71844.0},
+    }]})
+
+    nombre: str = Field(description="Nombre del modelo en el registry de MLflow.")
+    version: str = Field(description="Versión cargada.")
+    alias: str = Field(description="Alias con el que se cargó.")
+    run_id: str = Field(description="Run de MLflow que generó el modelo.")
+    metricas_test: MetricasTest | None = Field(
+        description="Métricas en test guardadas como tags de la versión.")
+
+
+class Recarga(BaseModel):
+    """Resultado de volver a cargar el champion."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [{
+        "version_anterior": "2", "version_actual": "3", "cambio": True,
+    }]})
+
+    version_anterior: str | None = Field(description="Versión que se estaba sirviendo, o null.")
+    version_actual: str = Field(description="Versión que se sirve ahora.")
+    cambio: bool = Field(description="Si el champion cambió de versión.")
+
+
+class Salud(BaseModel):
+    """Estado del servicio."""
+
+    status: Literal["ok"] = Field(description="Siempre `ok` si la API responde.")
+    modelo_cargado: bool = Field(description="Si hay un champion cargado para predecir.")
