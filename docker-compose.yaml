@@ -214,6 +214,9 @@ services:
       - MLFLOW_S3_ENDPOINT_URL=http://s3:9000
       - AWS_ENDPOINT_URL_S3=http://s3:9000
       - MLFLOW_TRACKING_URI=http://mlflow:5000
+      # Pocos reintentos: si MLflow no responde, la API arranca sin modelo en segundos
+      - MLFLOW_HTTP_REQUEST_MAX_RETRIES=2
+      - MLFLOW_HTTP_REQUEST_TIMEOUT=10
       - PYTHONPATH=/app/src
     volumes:
       - ./src:/app/src:ro
