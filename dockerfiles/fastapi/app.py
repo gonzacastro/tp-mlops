@@ -2,10 +2,13 @@ import logging
 from contextlib import asynccontextmanager
 
 import mlflow
-from fastapi import FastAPI
+import numpy as np
+import pandas as pd
+from fastapi import FastAPI, HTTPException
 from mlflow import MlflowClient
 
 from car_price.config import ALIAS_CHAMPION, NOMBRE_MODELO
+from schemas import Auto, Prediccion
 
 log = logging.getLogger("uvicorn.error")
 
@@ -42,3 +45,23 @@ app = FastAPI(lifespan=lifespan)
 @app.get("/")
 def read_root():
     return {"message": "Welcome to the Model Service"}
+
+
+@app.post("/predict", response_model=Prediccion)
+def predict(auto: Auto):
+    """Precio estimado en rupias para una publicación con el formato del CSV."""
+    if app.state.modelo is None:
+        raise HTTPException(
+            status_code=503,
+            detail=f"No hay modelo {NOMBRE_MODELO}@{ALIAS_CHAMPION} cargado "
+                   f"({app.state.error}). Corré el DAG train_car_price y reiniciá la API.",
+        )
+
+    # El modelo predice log(precio) y hace la limpieza adentro: recibe la fila cruda
+    X = pd.DataFrame([auto.model_dump()])
+    log_precio = app.state.modelo.predict(X)[0]
+    return Prediccion(
+        precio_inr=round(float(np.exp(log_precio))),
+        version_modelo=app.state.version.version,
+        alias=ALIAS_CHAMPION,
+    )
