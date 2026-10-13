@@ -112,7 +112,7 @@ De punta a punta, desde el repo recién clonado:
    `airflow/secrets/variables.yaml` (por defecto 10).
 
 3. **Verificar** que las tres tareas terminaron en verde y que los datos y el modelo quedaron
-   donde corresponde, en MinIO y en MLflow.
+   donde corresponde (ver [Qué verificar](#qué-verificar) más abajo).
 
 4. **Hacer que la API tome el modelo.** Si la API se levantó antes de que existiera un
    champion, hay que pedirle que lo cargue:
@@ -139,3 +139,50 @@ repiten los pasos 2 a 4. Cada corrida registra una versión nueva de `car_price_
 pip install -r requirements-dev.txt
 PYTHONPATH=src pytest
 ```
+
+## Qué verificar
+
+Después de una corrida de `train_car_price`, esto es lo que tiene que aparecer en cada lugar.
+
+### Airflow (http://localhost:8080)
+
+- En `train_car_price`, la corrida nueva con `subir_crudo`, `preparar` y `entrenar` en verde.
+- **Log de `preparar`**: la traza de limpieza paso por paso (8.128 → 6.907 → 6.902 → 6.694 →
+  6.691 filas) y el split `5,352 train / 1,339 test`.
+- **Log de `entrenar`**: la versión registrada, si quedó como champion y las métricas en test.
+  Las líneas que Airflow marca como error son mensajes `INFO` de MLflow que salen por stderr.
+- **Pestaña XCom** de cada tarea: lo que se pasan entre sí. `subir_crudo` devuelve la ruta del
+  crudo, `preparar` las de train y test, y `entrenar` el resumen (versión, métricas,
+  mejores hiperparámetros y los ids de los runs de MLflow).
+
+### MinIO (http://localhost:9001)
+
+| Bucket | Qué tiene que haber |
+|---|---|
+| `data` | `raw/car_details_v3.csv` (el CSV original, ~1 MB) y `processed/train.csv` y `processed/test.csv`, con la fecha de la última corrida. Los dos de `processed` tienen las columnas crudas más `selling_price`. |
+| `mlflow` | Una carpeta por modelo logueado en `<id del experimento>/models/<id del modelo>/artifacts/`, con `model.skops` (el pipeline serializado), `MLmodel` (firma y metadatos), `input_example.json` y los `requirements`. |
+
+### MLflow (http://localhost:5001)
+
+MLflow 3 abre en modo *GenAI*: hay que cambiar a **Model training** arriba a la izquierda.
+
+- **Experimento `car_price`**: cada corrida del DAG deja dos runs.
+  - `hpo-gb`, la búsqueda de hiperparámetros. Al desplegarlo aparecen `hpo_n_iter` runs
+    hijos (`gb-00`, `gb-01`, ...), uno por combinación, con sus parámetros y el RMSE-log de
+    validación cruzada. Seleccionándolos y apretando **Compare** se ve qué hiperparámetros
+    funcionan mejor. En el padre quedan `n_iter` y la mejor combinación (`mejor_*`).
+  - `modelo-final`, el mejor modelo reentrenado con todo el train: sus parámetros, las
+    métricas en test (`rmse_log`, `r2_log`, `mae_inr`) y, en **Artifacts**, el modelo con su
+    firma y un ejemplo de entrada.
+- **Models → `car_price_gb`**: una versión por corrida, cada una con sus métricas de test como
+  tags. Una sola tiene el alias **`champion`**, la de menor `rmse_log`. Es la que carga la API.
+  Como el split es siempre el mismo, volver a correr el DAG sin cambiar los datos registra una
+  versión con las mismas métricas y el champion no se mueve.
+
+Con los datos actuales y `hpo_n_iter: 10`, el champion queda con RMSE-log ≈ 0.205, R² ≈ 0.922
+y MAE ≈ 71.800 INR en test.
+
+### API (http://localhost:8800/docs)
+
+- `GET /health` → `modelo_cargado: true`.
+- `GET /modelo` → la misma versión que tiene el alias `champion` en MLflow, con sus métricas.
