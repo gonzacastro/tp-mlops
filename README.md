@@ -30,12 +30,15 @@ PYTHONPATH=src python -m car_price.data
 
 ## Servicios
 
-| Servicio | URL |
-|---|---|
-| Airflow | http://localhost:8080 |
-| MLflow  | http://localhost:5001 |
-| MinIO   | http://localhost:9001 |
-| API     | http://localhost:8800/docs |
+| Servicio | URL | Usuario / contraseña |
+|---|---|---|
+| Airflow | http://localhost:8080 | `airflow` / `airflow` |
+| MLflow  | http://localhost:5001 | — |
+| MinIO   | http://localhost:9001 | `minio` / `minio123` |
+| API     | http://localhost:8800/docs | — |
+
+MLflow está en el 5001 y no en el 5000 porque en macOS el 5000 lo ocupa AirPlay (se cambia
+con `MLFLOW_PORT` en `.env`). Adentro de Docker sigue siendo `mlflow:5000`.
 
 ## Cómo levantarlo
 
@@ -75,16 +78,64 @@ El script usa esos mismos valores por defecto y loguea un parámetro, una métri
 de texto en el experimento `smoke`. Si anda, el run aparece en la UI de MLflow y el archivo en
 el bucket `mlflow` de MinIO.
 
-## Próximos pasos
+## Orden de ejecución
 
-Por ahora está resuelta la parte de datos. Lo que falta:
+De punta a punta, desde el repo recién clonado:
 
-1. Pasar a `src/car_price/` el preprocesamiento y el Gradient Boosting del notebook, así el
-   modelo se entrena desde código.
-2. Un DAG de Airflow que suba el CSV a MinIO, lo limpie y entrene el modelo.
-3. Loguear en MLflow la búsqueda de hiperparámetros y registrar el mejor modelo como champion.
-4. Que la API cargue el champion y tenga un endpoint `/predict` que devuelva el precio en
-   rupias.
-5. Completar la documentación con ejemplos de request y response.
+1. **Levantar el stack.** La primera vez construye las imágenes y tarda varios minutos.
 
-La idea es serializar el pipeline completo, con la limpieza incluida, para que la API reciba los datos en el mismo formato que el CSV y no haya que repetir código.
+   ```bash
+   docker compose --profile all up -d
+   ```
+
+   Está listo cuando `docker compose ps` muestra todos los servicios `healthy`. La API
+   arranca aunque todavía no haya modelo: `GET /health` responde `modelo_cargado: false`.
+
+2. **Activar y correr el DAG.** En Airflow, entrar a `train_car_price`, activarlo con el
+   interruptor de al lado del nombre (los DAGs arrancan pausados) y apretar **Trigger**.
+   También se puede desde la terminal:
+
+   ```bash
+   docker compose exec airflow-scheduler airflow dags unpause train_car_price
+   docker compose exec airflow-scheduler airflow dags trigger train_car_price
+   ```
+
+   Tarda alrededor de un minuto. Tiene tres tareas que corren en orden:
+
+   | Tarea | Qué hace |
+   |---|---|
+   | `subir_crudo` | Copia `data/Car details v3.csv` a `s3://data/raw/car_details_v3.csv` |
+   | `preparar` | Limpia y guarda `s3://data/processed/train.csv` (5.352 filas) y `test.csv` (1.339) |
+   | `entrenar` | Búsqueda de hiperparámetros, evaluación en test y registro en MLflow |
+
+   Cuántas combinaciones prueba la búsqueda sale de `hpo_n_iter` en
+   `airflow/secrets/variables.yaml` (por defecto 10).
+
+3. **Verificar** que las tres tareas terminaron en verde y que los datos y el modelo quedaron
+   donde corresponde, en MinIO y en MLflow.
+
+4. **Hacer que la API tome el modelo.** Si la API se levantó antes de que existiera un
+   champion, hay que pedirle que lo cargue:
+
+   ```bash
+   curl -X POST http://localhost:8800/modelo/recargar
+   ```
+
+   Lo mismo después de cualquier corrida del DAG que cambie el champion.
+
+5. **Probar la API.** En http://localhost:8800/docs, `POST /predict` → **Try it out** →
+   **Execute** con el ejemplo cargado. Tiene que devolver un precio en rupias y la versión del
+   modelo que lo calculó.
+
+### Volver a entrenar
+
+Para entrenar con datos nuevos se reemplaza `data/Car details v3.csv` (mismo nombre) y se
+repiten los pasos 2 a 4. Cada corrida registra una versión nueva de `car_price_gb`; el alias
+`champion` solo se mueve si la versión nueva tiene menor RMSE en test.
+
+### Tests
+
+```bash
+pip install -r requirements-dev.txt
+PYTHONPATH=src pytest
+```
