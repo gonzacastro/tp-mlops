@@ -245,6 +245,10 @@ los endpoints con ejemplos ya cargados. Desde la terminal:
 | `POST /modelo/recargar` | Tomar el champion actual de MLflow sin reiniciar la API |
 | `GET /health` | Estado del servicio (lo usa el healthcheck de Docker) |
 
+Las respuestas de abajo son reales. Lo único que puede cambiar es el número de versión
+(`version_modelo`, `version`): depende de cuántas veces se corrió el DAG. Con los mismos
+datos, los precios y las métricas dan igual en cualquier máquina.
+
 ### Predecir un precio
 
 Se manda una publicación con los mismos campos que el CSV, con las unidades adentro del texto:
