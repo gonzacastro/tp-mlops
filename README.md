@@ -186,3 +186,152 @@ y MAE ≈ 71.800 INR en test.
 
 - `GET /health` → `modelo_cargado: true`.
 - `GET /modelo` → la misma versión que tiene el alias `champion` en MLflow, con sus métricas.
+
+## Usar la API
+
+La documentación interactiva está en http://localhost:8800/docs: ahí se pueden probar todos
+los endpoints con ejemplos ya cargados. Desde la terminal:
+
+| Endpoint | Para qué |
+|---|---|
+| `POST /predict` | Precio estimado de un auto, en rupias |
+| `GET /modelo` | Qué versión del modelo se está sirviendo y sus métricas en test |
+| `POST /modelo/recargar` | Tomar el champion actual de MLflow sin reiniciar la API |
+| `GET /health` | Estado del servicio (lo usa el healthcheck de Docker) |
+
+### Predecir un precio
+
+Se manda una publicación con los mismos campos que el CSV, con las unidades adentro del texto:
+
+```bash
+curl -X POST http://localhost:8800/predict \
+  -H 'Content-Type: application/json' \
+  -d '{"name": "Maruti Swift Dzire VDI", "year": 2014, "km_driven": 145500, "fuel": "Diesel", "seller_type": "Individual", "transmission": "Manual", "owner": "First Owner", "mileage": "23.4 kmpl", "engine": "1248 CC", "max_power": "74 bhp", "torque": "190Nm@ 2000rpm", "seats": 5}'
+```
+
+```json
+{
+  "precio_inr": 457722,
+  "version_modelo": "2",
+  "alias": "champion"
+}
+```
+
+Es el primer auto del dataset, que se publicó a 450.000 INR. El entrenamiento es
+determinístico (split y semillas fijas), así que con estos datos el precio da lo mismo en
+cualquier máquina; lo que cambia es `version_modelo`, que depende de cuántas veces se corrió
+el DAG.
+
+Los campos de la ficha técnica (`mileage`, `engine`, `max_power`, `torque`, `seats`) son
+opcionales; si faltan, el modelo los imputa:
+
+```bash
+curl -X POST http://localhost:8800/predict \
+  -H 'Content-Type: application/json' \
+  -d '{"name": "Hyundai i20 Sportz 1.2", "year": 2017, "km_driven": 35000, "fuel": "Petrol", "seller_type": "Dealer", "transmission": "Manual", "owner": "First Owner"}'
+```
+
+```json
+{
+  "precio_inr": 693403,
+  "version_modelo": "2",
+  "alias": "champion"
+}
+```
+
+### Errores
+
+**422: datos inválidos.** Falta un campo obligatorio o un valor está fuera de lo que vio el
+modelo. La respuesta lista cada problema con el campo (`loc`) y el motivo (`msg`). Acá falta
+`year` y `owner` es `Test Drive Car`, una categoría que se filtró en el entrenamiento:
+
+```bash
+curl -X POST http://localhost:8800/predict \
+  -H 'Content-Type: application/json' \
+  -d '{"name": "Maruti Swift Dzire VDI", "km_driven": 145500, "fuel": "Diesel", "seller_type": "Individual", "transmission": "Manual", "owner": "Test Drive Car"}'
+```
+
+```json
+{
+  "detail": [
+    {
+      "type": "missing",
+      "loc": ["body", "year"],
+      "msg": "Field required",
+      "input": {"name": "Maruti Swift Dzire VDI", "km_driven": 145500, "fuel": "Diesel", "seller_type": "Individual", "transmission": "Manual", "owner": "Test Drive Car"}
+    },
+    {
+      "type": "literal_error",
+      "loc": ["body", "owner"],
+      "msg": "Input should be 'First Owner', 'Second Owner', 'Third Owner' or 'Fourth & Above Owner'",
+      "input": "Test Drive Car",
+      "ctx": {"expected": "'First Owner', 'Second Owner', 'Third Owner' or 'Fourth & Above Owner'"}
+    }
+  ]
+}
+```
+
+**503: no hay modelo.** Pasa si la API se levantó antes de la primera corrida del DAG. La API
+arranca igual (`GET /health` da `"modelo_cargado": false`), pero no puede predecir:
+
+```json
+{
+  "detail": "No hay modelo car_price_gb@champion cargado (RESOURCE_DOES_NOT_EXIST: Registered Model with name=car_price_gb not found). Corré el DAG train_car_price y después POST /modelo/recargar."
+}
+```
+
+Se arregla corriendo el DAG y recargando:
+
+```bash
+curl -X POST http://localhost:8800/modelo/recargar
+```
+
+```json
+{
+  "version_anterior": null,
+  "version_actual": "2",
+  "cambio": true
+}
+```
+
+Si se recarga antes de que el DAG termine, también da 503 y la API sigue como estaba:
+
+```json
+{
+  "detail": "No se pudo recargar (RESOURCE_DOES_NOT_EXIST: Registered Model with name=car_price_gb not found); sigue sin modelo."
+}
+```
+
+### Información del modelo
+
+```bash
+curl http://localhost:8800/modelo
+```
+
+```json
+{
+  "nombre": "car_price_gb",
+  "version": "2",
+  "alias": "champion",
+  "run_id": "6b8bd02e87b14f2291c3b625a4668e6c",
+  "metricas_test": {
+    "rmse_log": 0.20492928605504668,
+    "r2_log": 0.9224190865693929,
+    "mae_inr": 71844.00766983234
+  }
+}
+```
+
+`rmse_log` y `r2_log` están en la escala en que entrena el modelo (logaritmo del precio);
+`mae_inr` es el error absoluto medio en rupias. El `run_id` es el del run `modelo-final` en
+MLflow.
+
+Después de una corrida del DAG que no cambió el champion, `recargar` no vuelve a cargar nada:
+
+```json
+{
+  "version_anterior": "2",
+  "version_actual": "2",
+  "cambio": false
+}
+```
