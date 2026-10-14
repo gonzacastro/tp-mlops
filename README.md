@@ -11,6 +11,52 @@ La infraestructura base es la de la cátedra
 ([amq2-service-ml](https://github.com/facundolucianna/amq2-service-ml)); sobre eso agregamos
 el modelo, el DAG y la API.
 
+## Arquitectura
+
+```mermaid
+flowchart TB
+    subgraph dag["Airflow · DAG train_car_price"]
+        direction LR
+        csv[("data/Car details v3.csv<br/>(en el repo)")]
+        t1["subir_crudo"]
+        raw[("MinIO<br/>data/raw/")]
+        t2["preparar<br/>limpieza y<br/>split 80/20"]
+        proc[("MinIO<br/>data/processed/<br/>train · test")]
+        t3["entrenar<br/>búsqueda de<br/>hiperparámetros"]
+        csv --> t1 --> raw --> t2 --> proc --> t3
+    end
+
+    subgraph mlflow["MLflow"]
+        direction LR
+        exp["Experimento car_price<br/>runs hpo-gb y modelo-final"]
+        reg["Registry car_price_gb<br/>alias champion"]
+        art[("MinIO<br/>bucket mlflow<br/>modelos serializados")]
+        exp -->|"registra la versión;<br/>champion si mejora"| reg
+        exp -.->|"artefactos"| art
+    end
+
+    subgraph api["FastAPI"]
+        direction LR
+        pred["POST /predict"]
+        info["GET /modelo<br/>POST /modelo/recargar"]
+    end
+
+    usuario(["Usuario"])
+
+    dag -->|"loguea runs y modelo"| mlflow
+    mlflow -->|"carga el champion al arrancar o con /modelo/recargar"| api
+    usuario <-->|"publicación en JSON → precio en INR"| api
+
+    classDef datos fill:#fff4e0,stroke:#c77700,color:#3d2600
+    class csv,raw,proc,art datos
+```
+
+El DAG `train_car_price` copia el CSV del repo a MinIO, lo limpia y lo separa en train y test,
+y entrena con búsqueda de hiperparámetros. Todo lo que pasa en el entrenamiento queda en
+MLflow: los runs en el experimento `car_price` (con los metadatos en Postgres y los modelos
+serializados en el bucket `mlflow` de MinIO) y cada modelo como una versión de `car_price_gb`.
+La versión con menor error en test tiene el alias `champion`, y es la que carga la API.
+
 ## Datos
 
 El dataset es el de [CarDekho en Kaggle](https://www.kaggle.com/datasets/nehalbirla/vehicle-dataset-from-cardekho)
